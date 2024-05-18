@@ -1,9 +1,7 @@
-use axum::{
-    body::Body, extract::State, http::Response, routing::get, Router
-};
+use axum::{body::Body, extract::State, http::Response, routing::get, Router};
 use rspotify::{
     clients::{BaseClient, OAuthClient},
-    model::{AdditionalType, Device, FullTrack},
+    model::{AdditionalType, Device, FullTrack, RepeatState},
     scopes, AuthCodeSpotify, Credentials, Token,
 };
 use serde::Serialize;
@@ -34,7 +32,8 @@ struct CurrentlyPlaying {
     track: Track,
     progress_secs: u32,
     shuffled: bool,
-    playing: bool
+    playing: bool,
+    repeat_status: RepeatState,
 }
 
 async fn simplify_track(full_track: FullTrack) -> Track {
@@ -84,7 +83,8 @@ async fn get_current_playback(State(state): State<SpotifyState>) -> Result<Respo
                 track: simplify_track(track_info).await,
                 progress_secs: playing.progress.unwrap().num_seconds() as u32,
                 shuffled: playing.shuffle_state,
-                playing: playing.is_playing
+                playing: playing.is_playing,
+                repeat_status: playing.repeat_state,
             };
 
             let body = serde_json::to_string(&res_playing).unwrap();
@@ -93,12 +93,13 @@ async fn get_current_playback(State(state): State<SpotifyState>) -> Result<Respo
                 .header("Content-Type", "application/json")
                 .body(Body::from(body))
                 .unwrap());
-            
         }
         Ok(None) => {
             return Ok(Response::builder()
                 .header("Content-Type", "application/json")
-                .body(Body::new("{\"message\": \"Could not get playback\"}".to_string()))
+                .body(Body::new(
+                    "{\"message\": \"Could not get playback\"}".to_string(),
+                ))
                 .unwrap());
         }
         Err(err) => {
