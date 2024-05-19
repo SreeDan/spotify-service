@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use axum::{body::Body, http::Response, routing::get, Extension, Router};
-use chrono::TimeDelta;
+use chrono::{Duration, TimeDelta};
 use rspotify::{
     clients::{BaseClient, OAuthClient},
     model::{AdditionalType, Device, FullTrack, RepeatState},
@@ -187,6 +187,30 @@ async fn toggle_playback(state: Extension<Arc<Mutex<SpotifyState>>>) {
     }
 }
 
+async fn next_track(state: Extension<Arc<Mutex<SpotifyState>>>) {
+    update_state(state.clone()).await;
+        
+    let locked_state = state.lock().await;
+    let device_id = locked_state.clone().playback_status.unwrap().device_id;
+    let _ = locked_state.spotify.next_track(Some(device_id.as_str())).await;
+}
+
+async fn previous_track(state: Extension<Arc<Mutex<SpotifyState>>>) {
+    update_state(state.clone()).await;
+    
+    let locked_state = state.lock().await;
+    let device_id = locked_state.clone().playback_status.unwrap().device_id;
+    let _ = locked_state.spotify.previous_track(Some(device_id.as_str())).await;
+}
+
+async fn restart_track(state: Extension<Arc<Mutex<SpotifyState>>>) {
+    update_state(state.clone()).await;
+
+    let locked_state = state.lock().await;
+    let device_id = locked_state.clone().playback_status.unwrap().device_id;
+    let _ = locked_state.spotify.seek_track(Duration::seconds(0), Some(device_id.as_str())).await;
+}
+
 #[tokio::main]
 async fn main() {
     let creds = Credentials::from_env().unwrap();
@@ -213,6 +237,9 @@ async fn main() {
     let app = Router::new()
         .route("/current_playback", get(get_current_playback))
         .route("/toggle_playback", get(toggle_playback))
+        .route("/next_track", get(next_track))
+        .route("/previous_track", get(previous_track))
+        .route("/restart_track", get(restart_track))
         .layer(Extension(shared_state));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
