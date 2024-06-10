@@ -1,6 +1,7 @@
 use axum::{body::Body, extract::Query, http::Response, routing::get, Extension, Router};
 use chrono::{Duration, TimeDelta};
 use dotenv::dotenv;
+use lambda_http::{run, tracing, Error};
 use once_cell::sync::Lazy;
 use rspotify::{
     clients::{BaseClient, OAuthClient},
@@ -327,6 +328,8 @@ async fn restart_track(
 
 #[tokio::main]
 async fn main() {
+    tracing::init_default_subscriber();
+
     dotenv().ok();
     let creds = Credentials::from_env().unwrap();
     let mut spotify = AuthCodeSpotify::from_token(Token {
@@ -357,7 +360,5 @@ async fn main() {
         .route("/restart_track", get(restart_track))
         .layer(Extension(shared_state));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-
-    axum::serve(listener, app).await.unwrap();
+    run(app).await;
 }
