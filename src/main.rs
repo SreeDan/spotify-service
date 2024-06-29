@@ -1,4 +1,10 @@
-use axum::{body::Body, extract::Query, http::Response, routing::get, Extension, Router};
+use axum::{
+    body::{self, Body},
+    extract::Query,
+    http::Response,
+    routing::get,
+    Extension, Router,
+};
 use chrono::{Duration, TimeDelta};
 use dotenv::dotenv;
 use lambda_http::{run, tracing, Error};
@@ -163,9 +169,7 @@ async fn get_current_playback(
 
             Ok(Response::builder()
                 .header("Content-Type", "application/json")
-                .body(Body::new(
-                    "{\"message\": \"Could not get playback\"}".to_string(),
-                ))
+                .body(Body::empty())
                 .unwrap())
         }
         Err(err) => {
@@ -360,5 +364,8 @@ async fn main() {
         .route("/restart_track", get(restart_track))
         .layer(Extension(shared_state));
 
+    // let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    //
+    // axum::serve(listener, app).await.unwrap();
     run(app).await;
 }
