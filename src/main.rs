@@ -1,13 +1,18 @@
 use axum::{
-    body::{self, Body},
+    body::{Body, HttpBody},
     extract::Query,
-    http::Response,
+    response::Response,
     routing::get,
     Extension, Router,
 };
 use chrono::{Duration, TimeDelta};
 use dotenv::dotenv;
-use lambda_http::{run, tracing, Error};
+use image::{io::Reader as ImageReader, DynamicImage};
+use lambda_http::{
+    run,
+    tracing::{self, error},
+    Error,
+};
 use once_cell::sync::Lazy;
 use rspotify::{
     clients::{BaseClient, OAuthClient},
@@ -15,12 +20,19 @@ use rspotify::{
     scopes, AuthCodeSpotify, Credentials, Token,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{io::Cursor, sync::Arc};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Deserialize)]
-struct QueryParams {
+struct AuthQueryParam {
     auth_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImageQueryParam {
+    image_url: String,
+    width: u32,
+    height: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -181,7 +193,7 @@ async fn get_current_playback(
 }
 
 async fn toggle_playback(
-    Query(params): Query<QueryParams>,
+    Query(params): Query<AuthQueryParam>,
     state: Extension<Arc<Mutex<SpotifyState>>>,
 ) -> Result<Response<Body>, String> {
     let locked_token = AUTH_TOKEN.lock().await;
@@ -235,7 +247,7 @@ async fn toggle_playback(
 }
 
 async fn next_track(
-    Query(params): Query<QueryParams>,
+    Query(params): Query<AuthQueryParam>,
     state: Extension<Arc<Mutex<SpotifyState>>>,
 ) -> Result<Response<Body>, String> {
     let locked_token = AUTH_TOKEN.lock().await;
@@ -267,7 +279,7 @@ async fn next_track(
 }
 
 async fn previous_track(
-    Query(params): Query<QueryParams>,
+    Query(params): Query<AuthQueryParam>,
     state: Extension<Arc<Mutex<SpotifyState>>>,
 ) -> Result<Response<Body>, String> {
     let locked_token = AUTH_TOKEN.lock().await;
@@ -299,7 +311,7 @@ async fn previous_track(
 }
 
 async fn restart_track(
-    Query(params): Query<QueryParams>,
+    Query(params): Query<AuthQueryParam>,
     state: Extension<Arc<Mutex<SpotifyState>>>,
 ) -> Result<Response<Body>, String> {
     let locked_token = AUTH_TOKEN.lock().await;
@@ -328,6 +340,69 @@ async fn restart_track(
             "{\"message\": \"successfully restarted the track\"".to_string(),
         ))
         .unwrap());
+}
+
+async fn get_resized_image(Query(image_param): Query<ImageQueryParam>) -> Response<Body> {
+    let url = image_param.image_url;
+
+    let image_response = reqwest::get(url).await;
+    if image_response.is_err() {
+        log::error!("could not get response for image");
+        return Response::builder()
+            .status(500)
+            .body(Body::new("could not get response for image".to_string()))
+            .unwrap();
+    }
+
+    let response = image_response.unwrap();
+    if response.status() != 200 {
+        log::error!("status code for getting image: {:?}", response.status());
+        return Response::builder()
+            .status(500)
+            .body(Body::new(std::format!(
+                "status code to get image is {:?}",
+                response.status()
+            )))
+            .unwrap();
+    }
+
+    if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
+        if content_type != "image/jpeg" && content_type != "image/jpg" {
+            log::error!("response was not a jpeg");
+            return Response::builder()
+                .status(500)
+                .body(Body::from(std::format!(
+                    "response was type: {:?}",
+                    content_type
+                )))
+                .unwrap();
+        }
+    }
+
+    let image_bytes = response.bytes().await;
+    if image_bytes.is_err() {
+        log::error!("could not read image bytes");
+        return Response::builder().status(500).body(Body::empty()).unwrap();
+    }
+
+    let rgb_img = ImageReader::new(Cursor::new(image_bytes.unwrap()))
+        .with_guessed_format()
+        .expect("could not guess format")
+        .decode()
+        .expect("could not decode image")
+        .into_rgb8();
+
+    let resized_image = DynamicImage::ImageRgb8(rgb_img)
+        .resize(
+            image_param.width,
+            image_param.height,
+            image::imageops::FilterType::Nearest,
+        )
+        .to_rgb8();
+
+    let raw_image = resized_image.clone().into_raw();
+
+    return Response::builder().body(Body::from(raw_image)).unwrap();
 }
 
 #[tokio::main]
@@ -362,6 +437,7 @@ async fn main() {
         .route("/next_track", get(next_track))
         .route("/previous_track", get(previous_track))
         .route("/restart_track", get(restart_track))
+        .route("/get_resized_image", get(get_resized_image))
         .layer(Extension(shared_state));
 
     // let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
